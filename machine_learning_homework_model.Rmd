@@ -1,0 +1,146 @@
+---
+title: "Machine Learning Homework Model"
+author: "Marta Bajorek"
+date: "30 06 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=FALSE,warning=FALSE,, include=F}
+library(magrittr)
+library(dplyr)
+library(caret)
+library(rpart)
+library(rattle)
+```
+
+## Overview
+
+In this project, I will use data from accelerometers on the belt, forearm, arm and dumbell to predict the manner in which participants performed barbell lifts - correctly or incorrectly. Source of the data and its detailed description can be found under this link: <br> http://groupware.les.inf.puc-rio.br/har
+
+
+## Dataset and short exploratory analysis
+
+Dataset contains data from 6 participants who performed barbell lifts in 5 different manners (1 correctly / 4 incorrectly): exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+The purpose of the original project is to specify correct execution, develop the tool for automatic and robust detection of execution mistakes, and find the best way to provide feedback on the quality of execution to the user.
+
+```{r}
+set.seed(256)
+project_data <- read.csv('pml-training.csv')
+dim(project_data)
+```
+
+```{r, inlude=F, echo=F, eval=F}
+colnames(project_data)
+length(grep('_arm',colnames(project_data)))
+length(grep('_forearm',colnames(project_data)))
+length(grep('_belt',colnames(project_data)))
+length(grep('_dumbbell',colnames(project_data)))
+length(grep('_timestamp',colnames(project_data)))
+table(project_data$new_window)
+table(project_data$num_window)
+project_data$classe %>% unique()
+project_data$user_name %>% unique()
+160 - 38*4
+```
+
+
+
+
+Training test contains 19622 observations of 160 variables.
+160 variables represent data from 4 sensors, including 3 on-body sensors (belt sensor, arm sensor, forearm sensor) and a dumbell sensor. This is 38 variables for each of the sensors representing measures such as 3-dimension coordinates (x,y,z), acceleration, rotation, etc.
+There are also 7 other variables including timestamps, exection 'windows' or observation numbers - these seem not to be helpful in the model. Participants name could be usefull as each of the participants may have their own mode of performing the exercise. Though as the purpose of the project is of general application, I'd rather not focus on participant name as a predictor.<br>
+The goal is to predict classe variable (manner in which exercise was performed).
+
+I divide my project_dataset into train_ and test_ dataset of 75%/25% quantity proportion.  <br>
+Final validation will be performed on seperate validation dataset containing only 20 observations. <br>
+I construct my model using train_data, with 10-fold cross-validation.<br>
+Next, I will check some of its versions on the test_data to decide which one model to apply to the final validation dataset.
+
+```{r}
+inTrain <- createDataPartition( y=project_data$classe,p=0.75, list=F)
+train_data <- project_data[inTrain,]
+test_data <- project_data[-inTrain,]
+
+```
+
+
+## Variable selection
+
+I exclude variables that have near-zero-variance and those with missing data.
+I also exclude variables no 1-6: X (observation number), user_name, timestamps and 'window' indicators.
+
+```{r}
+nzv <- nearZeroVar(train_data,saveMetrics = T)
+na <- apply(train_data,2,function(x){sum(is.na(x))>0}) %>% setNames(NULL)
+train_data <- train_data[,(!nzv$nzv)&(!na)][,-c(1:6)]
+train_data$classe %<>% as.factor()
+```
+
+
+## Model 
+
+I decided to use decision tree as it is easy to interpret and has good performance in non-linear settings - a classification task. As my knowledge in the subject is very moderate I also hope for the decision tree approach to help me chose the right predictors for the model.<br>
+I ran 3 model fits on the train_data: <br>
+1. decission tree with caret package and method='rpart'<br>
+2.decission tree using rpart package and its default setting of complexity parameter (cp=0.01)<br>
+3. decission tree using rpart package with lower complexity parameter (cp=0.001)
+
+```{r}
+modFit1 <- caret::train(
+  classe ~., 
+  method="rpart",
+  data=train_data,
+  trControl=trainControl(method='cv',number=10))
+
+modFit2 <- rpart(classe ~., data=train_data)
+
+modFit3 <- rpart(classe ~., data=train_data,control=list(cp=0.001))
+```
+
+Models accuracy on train_data:
+
+```{r,include=T,echo=F,eval=T}
+cat('Accuracy1:',sum(predict(modFit1,newdata=train_data)==train_data$classe)/nrow(train_data),'\n',
+    'Accuracy2:',sum(predict(modFit2,newdata=train_data,type='class')==train_data$classe)/nrow(train_data),'\n',
+    'Accuracy3:',sum(predict(modFit3,newdata=train_data,type='class')==train_data$classe)/nrow(train_data))
+
+```
+
+Models accuracy on test_data: (accordingly)
+
+```{r,include=T,echo=F}
+predict_test1 <- predict(modFit1,newdata=test_data,na.action = na.pass)
+predict_test2 <- predict(modFit2,newdata=test_data,type='class')
+predict_test3 <- predict(modFit3,newdata=test_data,type='class')
+cat(sum(predict_test1==test_data$classe)/nrow(test_data),sum(predict_test2==test_data$classe)/nrow(test_data),sum(predict_test3==test_data$classe)/nrow(test_data),sep='\n')
+```
+
+Model 3 gives the highest accuracy on train data. <br>
+Model 3 also gives the highest accuracy on test_data - despite cp=0.001 it seems not to overfit. <br>
+Accuracy of all 3 models on test_data is slighthly lower than on train data which was expected. <br>
+
+The model selected for final validation: **Model 3**. <br>
+I expect accuracy on final validation dataset to slightly lower than on test_data, but still around 90%. (it turned out 85%)<br>
+
+Chart of my final model is somewhat illegible when printed on single page:
+```{r}
+fancyRpartPlot(modFit3)
+```
+
+Final model and the variables it uses:
+
+```{r}
+print(modFit3)
+```
+
+<!-- Validation set -->
+
+```{r,include=F,echo=F,eval=F}
+validation_data <- read.csv('pml-testing.csv')
+predict_validation <- predict(modFit3,newdata=validation_data,type='class')
+```
